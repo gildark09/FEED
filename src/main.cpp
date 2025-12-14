@@ -10,8 +10,12 @@ String savedPASS = "";
 
 Servo feeder;
 
-#define SERVO_PIN D4
-
+#define SERVO_PIN D5      // GPIO14
+#define TRIG_PIN  D6      // GPIO12
+#define ECHO_PIN  D7      // GPIO13
+#define GREEN D1
+#define RED D2
+const int containerHeight = 25;
 
 const char* htmlPage = R"rawliteral(
 <!DOCTYPE html>
@@ -32,15 +36,51 @@ const char* htmlPage = R"rawliteral(
 </html>
 )rawliteral";
 
-void handleRoot();              // function prototypes for HTTP handlers
+void handleRoot();              
 void sendOK();
 void handleFeed();
 void handleSave();  
+void handleLevel();
+
+long getStableDistance() {
+  long sum = 0;
+  int count = 0;
+
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+    long distance = duration * 0.034 / 2;
+
+    if (distance > 2 && distance < 180) {
+      sum += distance;
+      count++;
+    }
+
+    delay(50);
+    Serial.print("Raw reading: ");
+    Serial.println(distance);
+    }
+
+  if (count == 0) return -1;
+  return sum / count;
+}
+
 
 
 void setup() {
   Serial.begin(115200);
   feeder.attach(SERVO_PIN);
+
+  pinMode(GREEN, OUTPUT);
+  pinMode(RED, OUTPUT);
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
 
   // Start AP mode
   WiFi.mode(WIFI_AP);
@@ -53,6 +93,9 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/save", handleSave);
   server.on("/feed", handleFeed);
+  server.on("/level", handleLevel);
+
+  feeder.write(0);
 
   server.begin();
   Serial.println("HTTP server started");
@@ -62,6 +105,7 @@ void setup() {
 
 void loop() {
   server.handleClient();
+
 }
 
 
@@ -73,14 +117,42 @@ void handleRoot() {
 void handleFeed() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "text/plain", "Fed successfully");
+  delay(1000);
 
-  feeder.write(90);
-  delay(1500);
+  digitalWrite(GREEN, HIGH);
+  feeder.write(90);    
+  delay(2000);
   feeder.write(0);
+  digitalWrite(GREEN, LOW);
 
-  Serial.println("SUCCESS!");
+  Serial.println("NIGANA MAN!");
 } 
 
+void handleLevel() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+
+  long distance = getStableDistance();
+  int level = 0;
+
+  Serial.print("Filtered distance: ");
+  Serial.println(distance);
+
+  if (distance > 0) {
+    level = map(distance, 0, containerHeight, 100, 0);
+    level = constrain(level, 0, 100);
+  }
+
+  if(level < 20){
+    digitalWrite(RED, HIGH);
+    delay(500);
+    digitalWrite(RED, LOW);
+  }
+
+  String json = "{\"level\":" + String(level) + "}";
+  server.send(200, "application/json", json);
+
+  Serial.printf("Food Level: %d%%\n", level);
+}
 
 void handleSave() {
   savedSSID = server.arg("ssid");
